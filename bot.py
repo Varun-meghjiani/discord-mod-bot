@@ -1,5 +1,5 @@
-import discord
-from discord.ext import commands, tasks
+import nextcord
+from nextcord.ext import commands, tasks
 import os
 import json
 from datetime import datetime, timedelta
@@ -12,7 +12,7 @@ if not TOKEN:
     print("Please set your Discord bot token as an environment variable.")
     exit(1)
 
-INTENTS = discord.Intents.default()
+INTENTS = nextcord.Intents.default()
 INTENTS.messages = True
 INTENTS.guilds = True
 INTENTS.members = True
@@ -30,9 +30,11 @@ PKT = pytz.timezone('Asia/Karachi')
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
-    with open(DATA_FILE, 'w') as f:
-        json.dump({}, f)
-    return {}
+    try:
+        with open(DATA_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
 
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
@@ -92,7 +94,7 @@ def can_checkin(user_id):
 async def check_in_reminder():
     now = get_now()
     for guild in bot.guilds:
-        role = discord.utils.get(guild.roles, name=MOD_ROLE_NAME)
+        role = nextcord.utils.get(guild.roles, name=MOD_ROLE_NAME)
         if not role:
             continue
         
@@ -122,7 +124,7 @@ async def check_in_reminder():
                 try:
                     if has_activity:
                         # They've been active, remind them to check-in
-                        embed = discord.Embed(
+                        embed = nextcord.Embed(
                             title="⏰ Check-in Reminder!",
                             description="You've been active in monitored channels. Please check-in now!",
                             color=0xffa500
@@ -134,7 +136,7 @@ async def check_in_reminder():
                         await mod.send(embed=embed)
                     else:
                         # They haven't been active, remind them to be active first
-                        embed = discord.Embed(
+                        embed = nextcord.Embed(
                             title="⚠️ Activity Required!",
                             description="You need to send messages in monitored channels before checking in!",
                             color=0xff0000
@@ -171,18 +173,18 @@ async def on_ready():
 async def create_role_and_channel(guild):
     try:
         # Create mod role if it doesn't exist
-        role = discord.utils.get(guild.roles, name=MOD_ROLE_NAME)
+        role = nextcord.utils.get(guild.roles, name=MOD_ROLE_NAME)
         if not role:
             role = await guild.create_role(name=MOD_ROLE_NAME)
             print(f'Created role: {MOD_ROLE_NAME}')
         
         # Create shift log channel if it doesn't exist
-        channel = discord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
+        channel = nextcord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
         if not channel:
             overwrites = {
-                guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                guild.default_role: nextcord.PermissionOverwrite(read_messages=False),
+                role: nextcord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.me: nextcord.PermissionOverwrite(read_messages=True, send_messages=True)
             }
             await guild.create_text_channel(SHIFT_LOG_CHANNEL_NAME, overwrites=overwrites)
             print(f'Created channel: {SHIFT_LOG_CHANNEL_NAME}')
@@ -222,7 +224,7 @@ async def on_message(message):
 async def shift_start(ctx):
     user = ctx.author
     guild = ctx.guild
-    role = discord.utils.get(guild.roles, name=MOD_ROLE_NAME)
+    role = nextcord.utils.get(guild.roles, name=MOD_ROLE_NAME)
     if role not in user.roles:
         await ctx.send('❌ You are not a mod! You need the "shitty mod" role.')
         return
@@ -233,7 +235,7 @@ async def shift_start(ctx):
     formatted_time = format_time(now)
     await ctx.send(f'✅ **Shift Started!**\n🕐 {formatted_time}\n\n⚠️ **Remember:** You must send messages in the monitored channels and check-in every 25 minutes!')
     # Log in channel
-    channel = discord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
+    channel = nextcord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
     if channel:
         await channel.send(f'🔵 **{user.display_name}** started their shift at {formatted_time}')
 
@@ -241,7 +243,7 @@ async def shift_start(ctx):
 async def shift_end(ctx):
     user = ctx.author
     guild = ctx.guild
-    role = discord.utils.get(guild.roles, name=MOD_ROLE_NAME)
+    role = nextcord.utils.get(guild.roles, name=MOD_ROLE_NAME)
     if role not in user.roles:
         await ctx.send('❌ You are not a mod! You need the "shitty mod" role.')
         return
@@ -255,14 +257,14 @@ async def shift_end(ctx):
     save_data(data)
     formatted_time = format_time(now)
     await ctx.send(f'🔴 **Shift Ended!**\n🕐 {formatted_time}')
-    channel = discord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
+    channel = nextcord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
     if channel:
         await channel.send(f'🔴 **{user.display_name}** ended their shift at {formatted_time}')
 
 @bot.command(name='checkin', help='Check in for your shift (must be active in monitored channels)')
 async def checkin(ctx):
     user = ctx.author
-    role = discord.utils.get(ctx.guild.roles, name=MOD_ROLE_NAME)
+    role = nextcord.utils.get(ctx.guild.roles, name=MOD_ROLE_NAME)
     if role not in user.roles:
         await ctx.send('❌ You are not a mod! You need the "shitty mod" role.')
         return
@@ -291,7 +293,7 @@ async def checkin(ctx):
     formatted_time = format_time(now)
     activity_count = len(recent_messages)
     
-    embed = discord.Embed(title="✅ Check-in Successful!", color=0x00ff00)
+    embed = nextcord.Embed(title="✅ Check-in Successful!", color=0x00ff00)
     embed.add_field(name="🕐 Time", value=formatted_time, inline=False)
     embed.add_field(name="📝 Recent Activity", value=f"You sent {activity_count} message(s) in monitored channels", inline=False)
     embed.add_field(name="⏰ Next Check-in", value="Available in 25 minutes", inline=False)
@@ -308,7 +310,7 @@ async def my_stats(ctx):
     recent_activity = len([msg for msg in user_data.get('recent_messages', []) 
                           if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(minutes=25)])
     
-    embed = discord.Embed(title=f"📊 Stats for {user.display_name}", color=0x00ff00)
+    embed = nextcord.Embed(title=f"📊 Stats for {user.display_name}", color=0x00ff00)
     embed.add_field(name="🔄 Total Shifts", value=str(total_shifts), inline=True)
     embed.add_field(name="✅ Successful Check-ins", value=str(checkins), inline=True)
     embed.add_field(name="❌ Missed Check-ins", value=str(missed), inline=True)
@@ -335,7 +337,7 @@ async def admin_stats(ctx):
     
     user_data = data.get(str(target_user.id), {'shifts': [], 'missed': [], 'checkins': [], 'recent_messages': []})
     
-    embed = discord.Embed(title=f"👑 Admin Report: {target_user.display_name}", color=0xff6b6b)
+    embed = nextcord.Embed(title=f"👑 Admin Report: {target_user.display_name}", color=0xff6b6b)
     embed.set_thumbnail(url=target_user.display_avatar.url)
     
     # Overall stats
@@ -378,7 +380,7 @@ async def weekly_report(ctx):
     now = get_now()
     week_ago = now - timedelta(days=7)
     
-    embed = discord.Embed(title="📊 Weekly Mod Report", description="Last 7 days", color=0x3498db)
+    embed = nextcord.Embed(title="📊 Weekly Mod Report", description="Last 7 days", color=0x3498db)
     
     for mod_id, mod_data in data.items():
         user = ctx.guild.get_member(int(mod_id))
