@@ -4,6 +4,8 @@ import os
 import json
 from datetime import datetime, timedelta
 import pytz
+import asyncio
+from aiohttp import web
 
 # Get token from environment variable only (for security)
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -25,6 +27,21 @@ SHIFT_LOG_CHANNEL_NAME = 'mod-shift-logs'
 MONITORED_CHANNEL_IDS = [1334854378686910475, 1234620156383203482]
 DATA_FILE = 'mod_data.json'
 PKT = pytz.timezone('Asia/Karachi')
+
+# --- Web Server for Healthcheck ---
+async def healthcheck(request):
+    return web.Response(text="Bot is running!", status=200)
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', healthcheck)
+    app.router.add_get('/health', healthcheck)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    print("✅ Web server started on port 8080 for healthcheck")
 
 # --- Data Persistence ---
 def load_data():
@@ -165,6 +182,9 @@ async def on_ready():
         print(f'- {guild.name} (ID: {guild.id})')
         # Create role and channel if they don't exist
         await create_role_and_channel(guild)
+    
+    # Start the web server for healthcheck
+    await start_web_server()
     
     # Start the reminder task
     check_in_reminder.start()
