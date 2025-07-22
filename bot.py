@@ -384,15 +384,15 @@ async def help_mod(ctx):
 
 **👑 Admin Commands:**
 `*weekly_report` - Get weekly report for all mods
-`*admin_stats` - Get detailed stats for varunkumar00
+`*admin_stats` - Get detailed stats for any user (use: *admin_stats <username>)
 
 **🔧 Utility:**
 `*help_mod` - Show this help message
 `*ping` - Test if bot is working
 
 **⚠️ Check-in Rules:**
-• Must send messages in monitored channels within 25 minutes
-• Can only check-in once every 25 minutes
+• Must send messages in monitored channels within 1 hour
+• Can only check-in once every 1 hour
 • Bot tracks your activity automatically
     """
     await ctx.send(help_text)
