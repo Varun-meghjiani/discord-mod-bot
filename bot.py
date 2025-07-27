@@ -166,11 +166,18 @@ async def on_ready():
         await create_role_and_channel(guild)
     
     # Start the web server for healthcheck
-    await start_web_server()
+    try:
+        await start_web_server()
+        print("✅ Web server started successfully")
+    except Exception as e:
+        print(f"❌ Error starting web server: {e}")
     
     # Start the reminder task
-    check_in_reminder.start()
-    print("✅ Check-in reminder system started!")
+    try:
+        check_in_reminder.start()
+        print("✅ Check-in reminder system started!")
+    except Exception as e:
+        print(f"❌ Error starting reminder task: {e}")
 
 async def create_role_and_channel(guild):
     try:
@@ -196,7 +203,10 @@ async def create_role_and_channel(guild):
 # --- Message Monitoring ---
 @bot.event
 async def on_message(message):
+    print(f"Received message: {message.content} from {message.author.name} in {message.channel.name}")
+    
     if message.author.bot:
+        print("Message is from bot, processing commands...")
         await bot.process_commands(message)
         return
     
@@ -219,6 +229,7 @@ async def on_message(message):
         
         save_data(data)
     
+    print("Processing commands...")
     await bot.process_commands(message)
 
 # --- Commands ---
@@ -399,7 +410,37 @@ async def help_mod(ctx):
 
 @bot.command(name='ping', help='Test if bot is working')
 async def ping(ctx):
+    print(f"Ping command received from {ctx.author.name}")
     await ctx.send('🏓 Pong! Mod bot is working!')
+
+@bot.command(name='test', help='Simple test command')
+async def test(ctx):
+    print(f"Test command received from {ctx.author.name}")
+    await ctx.send('✅ Bot is responding to commands!')
+
+@bot.command(name='debug', help='Debug command to check bot status')
+async def debug(ctx):
+    print(f"Debug command received from {ctx.author.name}")
+    embed = discord.Embed(title="🔧 Bot Debug Info", color=0x00ff00)
+    embed.add_field(name="Bot Name", value=bot.user.name, inline=True)
+    embed.add_field(name="Bot ID", value=bot.user.id, inline=True)
+    embed.add_field(name="Guild Count", value=len(bot.guilds), inline=True)
+    embed.add_field(name="Channel", value=ctx.channel.name, inline=True)
+    embed.add_field(name="User", value=ctx.author.name, inline=True)
+    embed.add_field(name="Message Content", value=ctx.message.content, inline=True)
+    await ctx.send(embed=embed)
+
+@bot.event
+async def on_command_error(ctx, error):
+    print(f"Command error: {error}")
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send(f"❌ Command not found. Use `*help_mod` to see available commands.")
+    else:
+        await ctx.send(f"❌ An error occurred: {str(error)}")
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    print(f"Bot error in event {event}: {args} {kwargs}")
 
 if __name__ == '__main__':
     bot.run(TOKEN) 
