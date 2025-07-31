@@ -71,8 +71,8 @@ def format_time(time_str):
     except:
         return time_str
 
-def check_mod_activity_in_channels(user_id, minutes=60):
-    """Check if mod sent messages in monitored channels in last X minutes (default 60)"""
+def check_mod_activity_in_channels(user_id, minutes=25):
+    """Check if mod sent messages in monitored channels in last X minutes (default 25)"""
     now = get_now()
     user_data = data.get(str(user_id), {})
     recent_messages = user_data.get('recent_messages', [])
@@ -80,14 +80,14 @@ def check_mod_activity_in_channels(user_id, minutes=60):
     for msg in recent_messages:
         try:
             msg_time = datetime.fromisoformat(msg['timestamp'])
-            if (now - msg_time) <= timedelta(hours=1):
+            if (now - msg_time) <= timedelta(minutes=25):
                 recent_activity.append(msg)
         except:
             continue
     return len(recent_activity) > 0, recent_activity
 
 def can_checkin(user_id):
-    """Check if user can check-in (1 hour since last check-in)"""
+    """Check if user can check-in (25 minutes since last check-in)"""
     user_data = data.get(str(user_id), {})
     checkins = user_data.get('checkins', [])
     if not checkins:
@@ -95,10 +95,26 @@ def can_checkin(user_id):
     last_checkin = datetime.fromisoformat(checkins[-1])
     now = get_now()
     time_since_last = now - last_checkin
-    if time_since_last < timedelta(hours=1):
-        remaining = timedelta(hours=1) - time_since_last
+    if time_since_last < timedelta(minutes=25):
+        remaining = timedelta(minutes=25) - time_since_last
         return False, remaining
     return True, None
+
+def get_todays_missed_checkins(user_id):
+    """Get number of missed check-ins for today"""
+    user_data = data.get(str(user_id), {})
+    today = get_now().date()
+    missed_today = 0
+    
+    for missed_time in user_data.get('missed', []):
+        try:
+            missed_date = datetime.fromisoformat(missed_time).date()
+            if missed_date == today:
+                missed_today += 1
+        except:
+            continue
+    
+    return missed_today
 
 # --- Check-In Reminder Task ---
 @tasks.loop(minutes=1)
@@ -118,42 +134,67 @@ async def check_in_reminder():
                     break
             if not on_shift:
                 continue  # Skip if not on shift
+            
             # Check last check-in time
             last_checkin = None
             if user_data['checkins']:
                 last_checkin = datetime.fromisoformat(user_data['checkins'][-1])
-            # If no check-in or check-in was more than 1 hour ago
-            if not last_checkin or (now - last_checkin) > timedelta(hours=1):
-                # Check if they've been active in monitored channels
-                has_activity, recent_messages = check_mod_activity_in_channels(mod.id, 60)
-                try:
-                    if has_activity:
+            
+            # If no check-in or check-in was more than 25 minutes ago
+            if not last_checkin or (now - last_checkin) > timedelta(minutes=25):
+                # Check if they're within the 5-minute grace period
+                grace_period_expired = last_checkin and (now - last_checkin) > timedelta(minutes=30)  # 25 + 5
+                
+                if grace_period_expired:
+                    # Grace period expired, log as missed
+                    if not user_data['missed'] or (user_data['missed'] and (now - datetime.fromisoformat(user_data['missed'][-1])) > timedelta(minutes=1)):
+                        user_data['missed'].append(now.isoformat())
+                        save_data(data)
+                        
+                        # Check how many misses today
+                        missed_today = get_todays_missed_checkins(mod.id)
+                        
                         embed = discord.Embed(
-                            title="⏰ Check-in Reminder!",
-                            description="You've been active in monitored channels. Please check-in now!",
-                            color=0xffa500
-                        )
-                        embed.add_field(name="🕐 Last Check-in", value=format_time(last_checkin.isoformat()) if last_checkin else "None", inline=True)
-                        embed.add_field(name="📝 Recent Activity", value=f"{len(recent_messages)} messages in monitored channels", inline=True)
-                        embed.add_field(name="✅ Action Required", value="Use `*checkin` to check-in", inline=False)
-                        await mod.send(embed=embed)
-                    else:
-                        embed = discord.Embed(
-                            title="⚠️ Activity Required!",
-                            description="You need to send messages in monitored channels before checking in!",
+                            title="❌ Check-in Missed!",
+                            description=f"You missed your check-in! You now have **{missed_today} missed check-in(s)** today.",
                             color=0xff0000
                         )
                         embed.add_field(name="🕐 Last Check-in", value=format_time(last_checkin.isoformat()) if last_checkin else "None", inline=True)
-                        embed.add_field(name="📝 Required Action", value="Send at least 1 message in monitored channels", inline=True)
-                        embed.add_field(name="📋 Monitored Channels", value=f"<#{MONITORED_CHANNEL_IDS[0]}> and <#{MONITORED_CHANNEL_IDS[1]}>", inline=False)
-                        embed.add_field(name="✅ Next Step", value="After sending a message, use `*checkin`", inline=False)
+                        embed.add_field(name="⚠️ Warning", value=f"You have {missed_today} missed check-in(s) today. Max allowed: 2", inline=True)
+                        
+                        if missed_today >= 2:
+                            embed.add_field(name="🚨 Critical", value="You have reached the maximum allowed missed check-ins for today!", inline=False)
+                        
                         await mod.send(embed=embed)
-                    # Log missed check-in
-                    if not user_data['missed'] or (user_data['missed'] and (now - datetime.fromisoformat(user_data['missed'][-1])) > timedelta(hours=1)):
-                        user_data['missed'].append(now.isoformat())
-                        save_data(data)
-                except Exception as e:
-                    print(f"Error sending reminder to {mod.name}: {e}")
+                else:
+                    # Still in grace period, send reminder
+                    has_activity, recent_messages = check_mod_activity_in_channels(mod.id, 25)
+                    try:
+                        if has_activity:
+                            embed = discord.Embed(
+                                title="⏰ Check-in Reminder!",
+                                description="You've been active in monitored channels. Please check-in now!",
+                                color=0xffa500
+                            )
+                            embed.add_field(name="🕐 Last Check-in", value=format_time(last_checkin.isoformat()) if last_checkin else "None", inline=True)
+                            embed.add_field(name="📝 Recent Activity", value=f"{len(recent_messages)} messages in monitored channels", inline=True)
+                            embed.add_field(name="⏰ Grace Period", value="You have 5 minutes to check-in before it's marked as missed!", inline=True)
+                            embed.add_field(name="✅ Action Required", value="Use `*checkin` to check-in", inline=False)
+                            await mod.send(embed=embed)
+                        else:
+                            embed = discord.Embed(
+                                title="⚠️ Activity Required!",
+                                description="You need to send messages in monitored channels before checking in!",
+                                color=0xff0000
+                            )
+                            embed.add_field(name="🕐 Last Check-in", value=format_time(last_checkin.isoformat()) if last_checkin else "None", inline=True)
+                            embed.add_field(name="📝 Required Action", value="Send at least 1 message in monitored channels", inline=True)
+                            embed.add_field(name="⏰ Grace Period", value="You have 5 minutes to check-in before it's marked as missed!", inline=True)
+                            embed.add_field(name="📋 Monitored Channels", value=f"<#{MONITORED_CHANNEL_IDS[0]}> and <#{MONITORED_CHANNEL_IDS[1]}>", inline=False)
+                            embed.add_field(name="✅ Next Step", value="After sending a message, use `*checkin`", inline=False)
+                            await mod.send(embed=embed)
+                    except Exception as e:
+                        print(f"Error sending reminder to {mod.name}: {e}")
 
 # --- Bot Events ---
 @bot.event
@@ -246,7 +287,7 @@ async def shift_start(ctx):
     data[str(user.id)]['shifts'].append({'start': now, 'end': None})
     save_data(data)
     formatted_time = format_time(now)
-    await ctx.send(f'✅ **Shift Started!**\n🕐 {formatted_time}\n\n⚠️ **Remember:** You must send messages in the monitored channels and check-in every 1 hour!')
+    await ctx.send(f'✅ **Shift Started!**\n🕐 {formatted_time}\n\n⚠️ **Remember:** You must send messages in the monitored channels and check-in every 25 minutes!\n⏰ **Grace Period:** You have 5 minutes after each 25-minute mark to check-in.\n❌ **Warning:** Missing more than 2 check-ins in a day will result in a warning.')
     channel = discord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
     if channel:
         await channel.send(f'🔵 **{user.display_name}** started their shift at {formatted_time}')
@@ -259,6 +300,10 @@ async def shift_end(ctx):
     if role not in user.roles:
         await ctx.send('❌ You are not a mod! You need the "shitty mod" role.')
         return
+    
+    # Check missed check-ins before ending shift
+    missed_today = get_todays_missed_checkins(user.id)
+    
     now = get_now().isoformat()
     user_data = data.setdefault(str(user.id), {'shifts': [], 'missed': [], 'checkins': [], 'recent_messages': []})
     # Find last open shift
@@ -268,7 +313,18 @@ async def shift_end(ctx):
             break
     save_data(data)
     formatted_time = format_time(now)
-    await ctx.send(f'🔴 **Shift Ended!**\n🕐 {formatted_time}')
+    
+    embed = discord.Embed(title="🔴 Shift Ended!", color=0xff0000)
+    embed.add_field(name="🕐 End Time", value=formatted_time, inline=False)
+    
+    if missed_today > 2:
+        embed.add_field(name="⚠️ Warning", value=f"You had {missed_today} missed check-ins today. This is above the limit of 2.", inline=False)
+        embed.color = 0xff6b6b
+    elif missed_today > 0:
+        embed.add_field(name="📊 Summary", value=f"You had {missed_today} missed check-in(s) today.", inline=False)
+    
+    await ctx.send(embed=embed)
+    
     channel = discord.utils.get(guild.text_channels, name=SHIFT_LOG_CHANNEL_NAME)
     if channel:
         await channel.send(f'🔴 **{user.display_name}** ended their shift at {formatted_time}')
@@ -280,26 +336,34 @@ async def checkin(ctx):
     if role not in user.roles:
         await ctx.send('❌ You are not a mod! You need the "shitty mod" role.')
         return
+    
     can_check, remaining_time = can_checkin(user.id)
     if not can_check:
         minutes = int(remaining_time.total_seconds() // 60)
         seconds = int(remaining_time.total_seconds() % 60)
         await ctx.send(f'⏰ **Please wait before checking in again!**\n⏳ You can check-in again in **{minutes}m {seconds}s**')
         return
-    has_activity, recent_messages = check_mod_activity_in_channels(user.id, 60)
+    
+    has_activity, recent_messages = check_mod_activity_in_channels(user.id, 25)
     if not has_activity:
-        await ctx.send(f'❌ **Check-in Failed!**\n\n⚠️ You must send at least one message in the monitored channels within the last 1 hour before checking in.\n\n📝 **Please send a message in the monitored channels and try again.**')
+        await ctx.send(f'❌ **Check-in Failed!**\n\n⚠️ You must send at least one message in the monitored channels within the last 25 minutes before checking in.\n\n📝 **Please send a message in the monitored channels and try again.**')
         return
+    
     now = get_now().isoformat()
     user_data = data.setdefault(str(user.id), {'shifts': [], 'missed': [], 'checkins': [], 'recent_messages': []})
     user_data['checkins'].append(now)
     save_data(data)
+    
     formatted_time = format_time(now)
     activity_count = len(recent_messages)
+    missed_today = get_todays_missed_checkins(user.id)
+    
     embed = discord.Embed(title="✅ Check-in Successful!", color=0x00ff00)
     embed.add_field(name="🕐 Time", value=formatted_time, inline=False)
     embed.add_field(name="📝 Recent Activity", value=f"You sent {activity_count} message(s) in monitored channels", inline=False)
-    embed.add_field(name="⏰ Next Check-in", value="Available in 1 hour", inline=False)
+    embed.add_field(name="⏰ Next Check-in", value="Available in 25 minutes", inline=False)
+    embed.add_field(name="❌ Missed Today", value=f"{missed_today} missed check-in(s)", inline=False)
+    
     await ctx.send(embed=embed)
 
 @bot.command(name='my_stats', help='See your own mod stats')
@@ -309,13 +373,21 @@ async def my_stats(ctx):
     total_shifts = len(user_data['shifts'])
     missed = len(user_data['missed'])
     checkins = len(user_data['checkins'])
+    missed_today = get_todays_missed_checkins(user.id)
     recent_activity = len([msg for msg in user_data.get('recent_messages', []) 
-                          if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(hours=1)])
+                          if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(minutes=25)])
+    
     embed = discord.Embed(title=f"📊 Stats for {user.display_name}", color=0x00ff00)
     embed.add_field(name="🔄 Total Shifts", value=str(total_shifts), inline=True)
     embed.add_field(name="✅ Successful Check-ins", value=str(checkins), inline=True)
-    embed.add_field(name="❌ Missed Check-ins", value=str(missed), inline=True)
-    embed.add_field(name="📝 Recent Activity (1hr)", value=f"{recent_activity} messages", inline=True)
+    embed.add_field(name="❌ Total Missed", value=str(missed), inline=True)
+    embed.add_field(name="📝 Recent Activity (25min)", value=f"{recent_activity} messages", inline=True)
+    embed.add_field(name="❌ Missed Today", value=f"{missed_today} missed check-in(s)", inline=True)
+    
+    if missed_today >= 2:
+        embed.add_field(name="⚠️ Warning", value="You have reached the maximum allowed missed check-ins for today!", inline=False)
+        embed.color = 0xff6b6b
+    
     await ctx.send(embed=embed)
 
 @bot.command(name='admin_stats', help='Get detailed stats for a user (admin only, use: *admin_stats <username>)')
@@ -339,7 +411,7 @@ async def admin_stats(ctx, *, username: str = None):
         total_checkins = len(user_data['checkins'])
         total_missed = len(user_data['missed'])
         recent_activity = len([msg for msg in user_data.get('recent_messages', []) 
-                              if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(hours=1)])
+                              if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(minutes=25)])
         embed.add_field(name="📈 Overall Stats", value=f"🔄 Shifts: {total_shifts}\n✅ Check-ins: {total_checkins}\n❌ Missed: {total_missed}\n📝 Recent Activity: {recent_activity} msgs", inline=False)
         await ctx.send(embed=embed)
     else:
@@ -353,7 +425,7 @@ async def admin_stats(ctx, *, username: str = None):
                 total_checkins = len(user_data['checkins'])
                 total_missed = len(user_data['missed'])
                 recent_activity = len([msg for msg in user_data.get('recent_messages', []) 
-                                      if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(hours=1)])
+                                      if (get_now() - datetime.fromisoformat(msg['timestamp'])) <= timedelta(minutes=25)])
                 embed.add_field(name=f"{member.display_name}", value=f"Shifts: {total_shifts}, Check-ins: {total_checkins}, Missed: {total_missed}, Activity: {recent_activity}", inline=False)
         await ctx.send(embed=embed)
 
@@ -402,8 +474,10 @@ async def help_mod(ctx):
 `*ping` - Test if bot is working
 
 **⚠️ Check-in Rules:**
-• Must send messages in monitored channels within 1 hour
-• Can only check-in once every 1 hour
+• Must send messages in monitored channels within 25 minutes
+• Can only check-in once every 25 minutes
+• You have a 5-minute grace period after each 25-minute mark
+• Missing more than 2 check-ins in a day will result in a warning
 • Bot tracks your activity automatically
     """
     await ctx.send(help_text)
